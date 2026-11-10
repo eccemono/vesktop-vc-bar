@@ -1,0 +1,297 @@
+#!/usr/bin/env python3
+"""Smart screen-share picker wrapper for xdg-desktop-portal-hyprland.
+
+Two jobs:
+
+1. Filter the small Nautilus dashboard out of the output list.
+   xdg-desktop-portal-hyprland passes the available outputs in
+   XDPH_OUTPUT_SHARING_LIST. In dashboard mode DP-1 is a sensor panel, so hide
+   it; when DP-1 is enabled as a normal monitor, leave it in the list.
+
+2. Collapse the duplicate prompts Vesktop/Electron produces on Wayland.
+   A single Discord "Go Live" asks the portal for a source more than once
+   (desktopCapturer.getSources + the actual capture). xdph's restore tokens
+   are broken, so every request would show the picker again. We remember the
+   last manual choice and answer follow-up requests for the same share
+   instantly, so exactly one picker is shown per share.
+
+How xdph talks to the picker (see xdph ScreencopyShared.cpp):
+  - it runs this binary, passing `--allow-token` when
+    `screencopy:allow_token_by_default` is true;
+  - it sets XDPH_WINDOW_SHARING_LIST / XDPH_OUTPUT_SHARING_LIST /
+    XDPH_WORKSPACE_SHARING_LIST* in the environment;
+  - it reads our stdout and looks for a line containing
+    `[SELECTION]<flags>/<type>:<value>`, e.g. `[SELECTION]r/window:123456`.
+    The `r` flag means "remember this choice" (grant a restore token).
+
+Debug helpers:
+  SHARE_PICKER_PRINT=1    print the filtered output list and exit
+  SHARE_PICKER_FORGET=1   forget the remembered choice, then show the picker
+  SHARE_PICKER_BURST=90   seconds a remembered choice stays auto-applied
+  SHARE_PICKER_LOG=path   override the decision log path
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+
+REAL_PICKER = "/usr/bin/hyprland-share-picker"
+MONITORS = os.environ.get("SHARE_PICKER_MONITORS_FILE") or os.path.expanduser(
+    "~/.config/hypr/monitors.lua"
+)
+HIDE_OUTPUT = os.environ.get("SHARE_PICKER_HIDE_OUTPUT", "DP-1")
+STATE_DIR = os.path.expanduser("~/.cache/hyprland-share-picker")
+STATE_FILE = os.path.join(STATE_DIR, "state.json")
+LOG_FILE = os.environ.get("SHARE_PICKER_LOG") or os.path.expanduser(
+    "~/.local/state/hyprland-share-picker/wrapper.log"
+)
+VC_BRIDGE_STATE = os.path.expanduser("~/.cache/vc-bridge/state.json")
+DEFAULT_BURST_SECONDS = 90
+# A live Discord stream keeps a remembered choice valid for this long after the
+# daemon last heard from the plugin (the daemon also bumps it while streaming).
+LIVE_STREAM_FRESH_SECONDS = 60
+
+
+def log(message):
+    try:
+        os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+        with open(LOG_FILE, "a", encoding="utf-8") as fh:
+            fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [{os.getpid()}] {message}\n")
+        if os.path.getsize(LOG_FILE) > 1024 * 1024:
+            os.replace(LOG_FILE, LOG_FILE + ".1")
+    except OSError:
+        pass
+
+
+def dashboard_mode() -> bool:
+    """True when HIDE_OUTPUT is a disabled monitor in the Hyprland config."""
+    try:
+        with open(MONITORS, "r", encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return False
+    block = re.search(
+        r'hl\.monitor\s*\(\s*\{.*?output\s*=\s*"' + re.escape(HIDE_OUTPUT) + r'".*?\}\s*\)',
+        text,
+        re.DOTALL,
+    )
+    if not block:
+        return False
+    return re.search(r"disabled\s*=\s*true", block.group(0)) is not None
+
+
+def filtered_output_list(raw: str) -> str:
+    if not dashboard_mode():
+        return raw
+    parts = [part for part in raw.split(";") if part]
+    kept = []
+    for part in parts:
+        fields = part.split(":")
+        if len(fields) > 1 and fields[1] == HIDE_OUTPUT:
+            continue
+        kept.append(part)
+    if not kept:
+        return raw
+    return ";".join(kept) + ";"
+
+
+def load_state():
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict) or not isinstance(data.get("selection"), str):
+        return {}
+    return data
+
+
+def save_state(selection: str, source: str):
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        payload = {"selection": selection, "source": source, "ts": time.time()}
+        fd, tmp = tempfile.mkstemp(dir=STATE_DIR, prefix=".state-", suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh)
+        os.replace(tmp, STATE_FILE)
+    except OSError as exc:
+        log(f"could not save state: {exc}")
+
+
+def clear_state():
+    try:
+        os.unlink(STATE_FILE)
+    except OSError:
+        pass
+
+
+def selection_target(selection: str) -> str:
+    """`r/window:123` -> (`window`, `123`)"""
+    body = selection.split("/", 1)[-1]
+    kind, _, value = body.partition(":")
+    return kind, value
+
+
+def target_is_available(selection: str, env) -> bool:
+    kind, value = selection_target(selection)
+    if not value:
+        return False
+
+    if kind == "window":
+        raw = env.get("XDPH_WINDOW_SHARING_LIST", "")
+        for entry in raw.split("[HA>]"):
+            if not entry:
+                continue
+            handle = entry.split("[HC>]", 1)[0]
+            if handle == value:
+                return True
+        return False
+
+    if kind == "screen":
+        raw = env.get("XDPH_OUTPUT_SHARING_LIST", "")
+        for entry in raw.split(";"):
+            if not entry:
+                continue
+            fields = entry.split(":")
+            if len(fields) > 1 and fields[1] == value:
+                return True
+        return False
+
+    if kind == "workspace":
+        raw_v3 = env.get("XDPH_WORKSPACE_SHARING_LIST_V3", "")
+        for chunk in raw_v3.split("[HE>]"):
+            if f"[HN>]{len(value)}:{value}[HM>]" in chunk:
+                return True
+        raw_v2 = env.get("XDPH_WORKSPACE_SHARING_LIST_V2", "")
+        for entry in raw_v2.split(";"):
+            fields = entry.split(":")
+            if len(fields) > 2 and fields[1] == value:
+                return True
+        return value in env.get("XDPH_WORKSPACE_SHARING_LIST", "").split("[HN>]")
+
+    if kind == "workspace-id":
+        raw_v3 = env.get("XDPH_WORKSPACE_SHARING_LIST_V3", "")
+        for chunk in raw_v3.split("[HE>]"):
+            if chunk.split("[HN>]", 1)[0] == value:
+                return True
+        return False
+
+    if kind == "region":
+        output = value.split("@", 1)[0]
+        raw = env.get("XDPH_OUTPUT_SHARING_LIST", "")
+        return any(
+            len(entry.split(":")) > 1 and entry.split(":")[1] == output
+            for entry in raw.split(";")
+            if entry
+        )
+
+    return False
+
+
+def vc_bridge_streaming() -> bool:
+    try:
+        with open(VC_BRIDGE_STATE, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        # The plugin heartbeats every few seconds, so last_msg_at is the real
+        # liveness signal (updated_at only moves when the state changes).
+        updated = float((data.get("plugin") or {}).get("last_msg_at") or data.get("updated_at") or 0)
+        self_state = data.get("self") or {}
+        return bool(self_state.get("streaming")) and (time.time() - updated) < LIVE_STREAM_FRESH_SECONDS
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def burst_seconds() -> float:
+    try:
+        return max(0.0, float(os.environ.get("SHARE_PICKER_BURST", DEFAULT_BURST_SECONDS)))
+    except ValueError:
+        return DEFAULT_BURST_SECONDS
+
+
+def remembered_selection(env):
+    """Return a selection we may answer instantly, or None."""
+    if os.environ.get("SHARE_PICKER_FORGET") == "1":
+        log("forget requested; not auto-answering")
+        clear_state()
+        return None
+
+    state = load_state()
+    if not state:
+        return None
+
+    selection = state["selection"]
+    if not target_is_available(selection, env):
+        log(f"remembered selection {selection} no longer available")
+        clear_state()
+        return None
+
+    age = time.time() - float(state.get("ts") or 0)
+    if age <= burst_seconds():
+        log(f"auto-answering duplicate prompt with {selection} (age {age:.1f}s)")
+        return selection
+
+    if vc_bridge_streaming():
+        log(f"auto-answering mid-stream prompt with {selection} (age {age:.1f}s, live stream)")
+        return selection
+
+    log(f"remembered selection {selection} expired (age {age:.1f}s)")
+    return None
+
+
+def extract_selection(stdout: str):
+    marker = stdout.find("[SELECTION]")
+    if marker == -1:
+        return None
+    rest = stdout[marker + len("[SELECTION]"):]
+    line = rest.splitlines()[0].strip() if rest.splitlines() else ""
+    return line or None
+
+
+def main() -> int:
+    env = dict(os.environ)
+    env["XDPH_OUTPUT_SHARING_LIST"] = filtered_output_list(env.get("XDPH_OUTPUT_SHARING_LIST", ""))
+
+    if env.get("SHARE_PICKER_PRINT") == "1":
+        print(env["XDPH_OUTPUT_SHARING_LIST"])
+        return 0
+
+    remembered = remembered_selection(env)
+    if remembered:
+        os.write(1, f"[SELECTION]{remembered}\n".encode())
+        return 0
+
+    log("showing picker")
+    try:
+        proc = subprocess.run(
+            [REAL_PICKER, *sys.argv[1:]],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=None,
+        )
+    except FileNotFoundError:
+        log(f"real picker missing at {REAL_PICKER}")
+        print(f"[XDPH_PICKER_ERROR] missing picker binary {REAL_PICKER}", file=sys.stderr)
+        return 1
+
+    stdout = proc.stdout.decode("utf-8", "replace")
+    stderr = proc.stderr.decode("utf-8", "replace")
+    os.write(1, proc.stdout)
+    if proc.stderr:
+        os.write(2, proc.stderr)
+
+    selection = extract_selection(stdout)
+    if selection:
+        save_state(selection, "manual")
+        log(f"user selected {selection}")
+    else:
+        log(f"picker returned no selection (exit {proc.returncode})")
+
+    return proc.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,72 @@
+id          = "eccemono/vesktop-vc"
+name        = "Vesktop Voice"
+version     = "0.2.0"
+plugin_api  = 24
+author      = "eccemono"
+license     = "MIT"
+icon        = "microphone"
+description = "Voice channel bubbles for Vesktop: who is in the call, mute/deafen/speaking and streaming state, plus mute, deafen and screen share controls."
+dependencies = ["vc-bridge (the vcb CLI, expected at ~/.local/bin/vcb)"]
+
+# --------------------------------------------------------------------------- #
+# Entries
+# --------------------------------------------------------------------------- #
+
+[[widget]]
+id    = "vc"
+entry = "widget.luau"
+
+  # Let the host handle the click: a bound gesture takes precedence over the
+  # script, so toggling works even while the panel holds focus.
+  [widget.actions]
+  left = "panel-toggle eccemono/vesktop-vc:details"
+
+  [[widget.setting]]
+  key             = "max_bubbles"
+  type            = "int"
+  label_key       = "settings.max_bubbles.label"
+  description_key = "settings.max_bubbles.description"
+  default         = 5
+  min             = 1
+  max             = 8
+
+  [[widget.setting]]
+  key             = "avatar_size"
+  type            = "int"
+  label_key       = "settings.avatar_size.label"
+  description_key = "settings.avatar_size.description"
+  default         = 20
+  min             = 14
+  max             = 26
+
+  [[widget.setting]]
+  key             = "show_controls"
+  type            = "bool"
+  label_key       = "settings.show_controls.label"
+  description_key = "settings.show_controls.description"
+  default         = true
+
+  [[widget.setting]]
+  key             = "hide_when_idle"
+  type            = "bool"
+  label_key       = "settings.hide_when_idle.label"
+  description_key = "settings.hide_when_idle.description"
+  default         = true
+
+  [[widget.setting]]
+  key             = "poll_ms"
+  type            = "int"
+  label_key       = "settings.poll_ms.label"
+  description_key = "settings.poll_ms.description"
+  default         = 500
+  min             = 200
+  max             = 5000
+
+[[panel]]
+id                = "details"
+entry             = "panel.luau"
+width             = 420
+height            = 460
+placement         = "floating"
+open_near_click   = true
+dismiss_on_outside_click = true

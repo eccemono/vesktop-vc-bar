@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+"""vcb — command line for the vc-bridge daemon.
+
+  vcb status [--json]   show the current voice channel state
+  vcb mute              toggle your microphone mute
+  vcb deafen            toggle your deafen
+  vcb share             open Discord's Go Live / share screen flow
+  vcb unshare           stop your current stream
+  vcb local-mute <id> [on|off]   mute/unmute someone for you (toggles when omitted)
+  vcb local-volume <id> <0-200>  set someone's volume for you (percent)
+  vcb eval "<js>"       evaluate JS in the Vesktop renderer (debug builds)
+  vcb result            show the last plugin command result
+  vcb serve             run the daemon in the foreground
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+
+STATE_FILE = os.path.expanduser("~/.cache/vc-bridge/state.json")
+VENV_PYTHON = os.path.expanduser("~/.local/share/vc-bridge/venv/bin/python")
+DAEMON = os.path.expanduser("~/.local/share/vc-bridge/vc_bridge.py")
+PORT = int(os.environ.get("VCB_PORT", "6475"))
+BASE = f"http://127.0.0.1:{PORT}"
+
+ACTIONS = {
+    "mute": "toggle_mute",
+    "toggle-mute": "toggle_mute",
+    "deafen": "toggle_deafen",
+    "toggle-deafen": "toggle_deafen",
+    "share": "start_stream",
+    "start-stream": "start_stream",
+    "unshare": "stop_stream",
+    "stop-stream": "stop_stream",
+}
+
+
+def read_state() -> dict:
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {"ok": False, "connected": False, "plugin": {"connected": False}, "members": [], "self": None}
+
+
+def post(path: str, payload: dict | None = None) -> dict:
+    data = None
+    headers = {}
+    if payload is not None:
+        data = json.dumps(payload).encode()
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(BASE + path, data=data or b"", headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=3) as resp:
+            return json.loads(resp.read().decode() or "{}")
+    except urllib.error.HTTPError as exc:
+        try:
+            return json.loads(exc.read().decode() or "{}")
+        except ValueError:
+            return {"ok": False, "error": f"HTTP {exc.code}"}
+    except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+        return {"ok": False, "error": f"daemon not reachable: {exc}"}
+
+
+def get(path: str) -> dict:
+    try:
+        with urllib.request.urlopen(BASE + path, timeout=3) as resp:
+            return json.loads(resp.read().decode() or "{}")
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ConnectionError, ValueError) as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def wait_result(command_id: int, timeout: float = 6.0) -> dict:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        result = get("/result")
+        if result.get("id") == command_id:
+            return result
+        time.sleep(0.15)
+    return {"ok": False, "error": "timed out waiting for the plugin"}
+
+
+def fmt_status(state: dict) -> str:
+    lines = []
+    plugin = state.get("plugin") or {}
+    lines.append(f"plugin: {'connected' if plugin.get('connected') else 'disconnected'}")
+    channel = state.get("channel")
+    if not state.get("connected") or not channel:
+        lines.append("voice:  not connected")
+        return "\n".join(lines)
+
+    guild = channel.get("guildName")
+    lines.append(f"voice:  {guild + ' / ' if guild else ''}{channel.get('name')}")
+
+    me = state.get("self") or {}
+    flags = []
+    if me.get("mute"):
+        flags.append("muted")
+    if me.get("deaf"):
+        flags.append("deafened")
+    if me.get("streaming"):
+        flags.append("streaming")
+    if me.get("speaking"):
+        flags.append("speaking")
+    lines.append(f"self:   {me.get('name', '?')}" + (f" ({', '.join(flags)})" if flags else ""))
+
+    members = state.get("members") or []
+    lines.append(f"people: {len(members)}")
+    for member in members:
+        status = []
+        if member.get("speaking"):
+            status.append("speaking")
+        if member.get("mute"):
+            status.append("muted")
+        if member.get("deaf"):
+            status.append("deafened")
+        if member.get("streaming"):
+            status.append("streaming")
+        lines.append(f"  - {member.get('name', member.get('userId', '?'))}" + (f" [{', '.join(status)}]" if status else ""))
+    return "\n".join(lines)
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) < 2:
+        print(__doc__.strip())
+        return 1
+
+    command = argv[1]
+    if command == "serve":
+        os.execv(VENV_PYTHON, [VENV_PYTHON, DAEMON, *argv[2:]])
+        return 1
+
+    if command == "status":
+        state = read_state()
+        if "--json" in argv[2:]:
+            print(json.dumps(state))
+        else:
+            print(fmt_status(state))
+        return 0 if state.get("plugin", {}).get("connected") else 0
+
+    if command == "eval":
+        if len(argv) < 3:
+            print("usage: vcb eval \"<javascript>\"", file=sys.stderr)
+            return 2
+        sent = post("/cmd/debug_eval", {"code": argv[2]})
+        if not sent.get("ok"):
+            print(f"error: {sent.get('error', 'unknown error')}", file=sys.stderr)
+            return 1
+        result = wait_result(int(sent.get("id", -1)))
+        if result.get("ok"):
+            print(result.get("result", ""))
+            return 0
+        print(f"error: {result.get('error', 'unknown error')}", file=sys.stderr)
+        return 1
+
+    if command in ("local-mute", "local-volume"):
+        if len(argv) < 3:
+            print(f"usage: vcb {command} <userId> " + ("[on|off]" if command == "local-mute" else "<0-200>"), file=sys.stderr)
+            return 2
+        user_id = argv[2]
+        if command == "local-mute":
+            mute = None
+            if len(argv) > 3:
+                mute = argv[3].lower() in ("1", "on", "true", "yes", "mute")
+            payload = {"userId": user_id}
+            if mute is not None:
+                payload["mute"] = mute
+            result = post("/cmd/local_mute", payload)
+        else:
+            if len(argv) < 4:
+                print("usage: vcb local-volume <userId> <0-200>", file=sys.stderr)
+                return 2
+            try:
+                volume = max(0, min(200, int(float(argv[3]))))
+            except ValueError:
+                print("volume must be a number 0-200", file=sys.stderr)
+                return 2
+            result = post("/cmd/local_volume", {"userId": user_id, "volume": volume})
+        if "--json" in argv[2:]:
+            print(json.dumps(result))
+        elif result.get("ok"):
+            print(f"ok: {command}")
+        else:
+            print(f"error: {result.get('error', 'unknown error')}", file=sys.stderr)
+        return 0 if result.get("ok") else 1
+
+    if command == "result":
+        print(json.dumps(get("/result")))
+        return 0
+
+    action = ACTIONS.get(command)
+    if not action:
+        print(f"unknown command: {command}", file=sys.stderr)
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+
+    result = post(f"/cmd/{action}")
+    if "--json" in argv[2:]:
+        print(json.dumps(result))
+    elif result.get("ok"):
+        print(f"ok: {command}")
+    else:
+        print(f"error: {result.get('error', 'unknown error')}", file=sys.stderr)
+    return 0 if result.get("ok") else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

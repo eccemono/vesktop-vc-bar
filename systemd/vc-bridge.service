@@ -1,0 +1,12 @@
+[Unit]
+Description=vc-bridge — Vesktop voice channel bridge for the noctalia bar
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/vc-bridge/venv/bin/python %h/.local/share/vc-bridge/vc_bridge.py --port 6475
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

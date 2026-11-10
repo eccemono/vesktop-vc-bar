@@ -26,8 +26,8 @@ noctalia plugin "eccemono/vesktop-vc" (Luau widget + panel)
 - **Self controls** in the bar: mic, deafen, screen share (also stops a live
   stream). Hidden automatically when you're not in a call.
 - **Panel** (click the widget): full member list in Discord's order, live
-  speaking rings, a **mini audio waveform** per member (real per-user WebRTC
-  `audioLevel`, with an animated fallback), and per-person
+  speaking rings, a **mini audio waveform** per member (driven by the inbound
+  audio byte rate from WebRTC stats, with an animated fallback), and per-person
   **volume (0–200 %)** and **“mute for me”**.
 - **Screen-share picker fix**: Vesktop asks xdg-desktop-portal-hyprland for a
   capture source more than once per “Go Live”; the wrapper remembers your pick
@@ -146,7 +146,8 @@ State lives in `~/.cache/vc-bridge/state.json`; logs in
 
 The Vencord plugin subscribes to `VOICE_STATE_UPDATES` and `SPEAKING` flux
 events, pushes a snapshot (members, mute/deafen flags, speaking, streaming) over
-a localhost WebSocket every 5 s and on every change, and executes commands
+a localhost WebSocket every 5 s and on every change, polls the media engine's
+`getStats()` for per-user audio levels, and executes commands
 (`MediaEngineActions` for mute/deafen/volume, `STREAM_STOP`, Discord's own
 “Share Your Screen” button for going live). The daemon keeps the state, caches
 and composites avatars (Pillow, badges drawn in the bottom-right corner), and

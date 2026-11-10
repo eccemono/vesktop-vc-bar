@@ -263,24 +263,88 @@ function sendState() {
     }
 }
 
-// Per-user microphone levels for the panel waveform. WebRTC's inbound-rtp
-// stats carry `audioLevel` per SSRC, and the media connection maps SSRCs back
-// to user ids - the same data Discord uses for its speaking indicator.
-function userIdForSsrc(connection: any, ssrc: number): string {
-    try {
-        const direct = connection.getUserIdBySsrc?.(ssrc);
-        if (direct) return String(direct);
-    } catch {
-        // fall through to the map
+// Per-user microphone levels for the panel waveform. Discord's media engine
+// exposes getStats() as { transport, rtp: { inbound: { userId: [stats] } } },
+// where each audio entry carries WebRTC's `audioLevel` (0..1). A few clients
+// return a plain RTCStatsReport instead, so both shapes are handled.
+const prevAudioBytes = new Map<string, { bytes: number; ts: number }>();
+
+// Discord's WebRTC build leaves `audioLevel` at 0, but the audio stream's byte
+// rate follows the Opus VBR payload, so it is a good proxy for voice activity.
+function levelFromBytes(userId: string, bytes: number): number {
+    const nowMs = Date.now();
+    const previous = prevAudioBytes.get(userId);
+    prevAudioBytes.set(userId, { bytes, ts: nowMs });
+    if (!previous) return 0;
+    const seconds = (nowMs - previous.ts) / 1000;
+    if (seconds <= 0) return 0;
+    const delta = bytes - previous.bytes;
+    if (delta <= 0) return 0;
+    return Math.max(0, Math.min(1, delta / seconds / 7000));
+}
+
+function mergeLevels(target: Record<string, number>, connection: any, stats: any): void {
+    // Discord's media engine shape: rtp.inbound is already keyed by userId.
+    const inbound = stats?.rtp?.inbound;
+    if (inbound && typeof inbound === "object" && !Array.isArray(inbound)) {
+        for (const [userId, entries] of Object.entries(inbound)) {
+            const list: any[] = Array.isArray(entries) ? entries : [entries];
+            let reported = 0;
+            let bytes = 0;
+            for (const entry of list) {
+                if (!entry) continue;
+                const kind = String(entry.type ?? entry.kind ?? "").toLowerCase();
+                if (kind !== "audio") continue;
+                const value = Number(entry.audioLevel);
+                if (Number.isFinite(value)) reported = Math.max(reported, value);
+                const received = Number(entry.bytesReceived);
+                if (Number.isFinite(received)) bytes = Math.max(bytes, received);
+            }
+            const derived = bytes > 0 ? levelFromBytes(userId, bytes) : 0;
+            const level = reported > 0.01 ? reported : derived;
+            target[userId] = Math.max(target[userId] ?? 0, Math.min(1, level));
+        }
+        return;
     }
-    const map: any = connection.userIdsBySsrc;
+
+    // Standard RTCStatsReport fallback: inbound-rtp entries with ssrc.
+    const reports: any[] = [];
     try {
-        if (map instanceof Map) return String(map.get(ssrc) ?? "");
-        if (map) return String(map[ssrc] ?? "");
+        if (typeof stats.forEach === "function") stats.forEach((report: any) => reports.push(report));
+        else if (Array.isArray(stats)) reports.push(...stats);
+        else if (stats) reports.push(...Object.values(stats));
     } catch {
-        // ignore
+        return;
     }
-    return "";
+    for (const report of reports) {
+        try {
+            if (String(report?.type ?? "").toLowerCase() !== "inbound-rtp") continue;
+            const kind = String(report.kind ?? report.mediaType ?? "audio").toLowerCase();
+            if (kind !== "audio") continue;
+            const ssrc = Number(report.ssrc);
+            if (!Number.isFinite(ssrc)) continue;
+            let userId = "";
+            try {
+                userId = String(connection.getUserIdBySsrc?.(ssrc) ?? "");
+            } catch {
+                // ignore
+            }
+            if (!userId) {
+                const map: any = connection.userIdsBySsrc;
+                try {
+                    userId = map instanceof Map ? String(map.get(ssrc) ?? "") : String(map?.[ssrc] ?? "");
+                } catch {
+                    // ignore
+                }
+            }
+            if (!userId) continue;
+            const level = Number(report.audioLevel);
+            if (!Number.isFinite(level)) continue;
+            target[userId] = Math.max(target[userId] ?? 0, Math.min(1, level));
+        } catch {
+            // ignore a malformed report
+        }
+    }
 }
 
 async function pollLevels(): Promise<void> {
@@ -298,32 +362,7 @@ async function pollLevels(): Promise<void> {
             } catch {
                 continue;
             }
-            if (!stats) continue;
-
-            const reports: any[] = [];
-            try {
-                if (typeof stats.forEach === "function") stats.forEach((report: any) => reports.push(report));
-                else if (Array.isArray(stats)) reports.push(...stats);
-                else reports.push(...Object.values(stats));
-            } catch {
-                continue;
-            }
-
-            for (const report of reports) {
-                try {
-                    if (String(report?.type ?? "").toLowerCase() !== "inbound-rtp") continue;
-                    const kind = String(report.kind ?? report.mediaType ?? "audio").toLowerCase();
-                    if (kind !== "audio") continue;
-                    const ssrc = Number(report.ssrc);
-                    if (!Number.isFinite(ssrc)) continue;
-                    const userId = userIdForSsrc(connection, ssrc);
-                    if (!userId) continue;
-                    const level = Number(report.audioLevel);
-                    if (Number.isFinite(level)) levels[userId] = Math.max(0, Math.min(1, level));
-                } catch {
-                    // ignore a malformed report
-                }
-            }
+            if (stats) mergeLevels(levels, connection, stats);
         }
 
         if (Object.keys(levels).length > 0) send({ type: "levels", levels });

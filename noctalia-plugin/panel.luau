@@ -142,6 +142,40 @@ local function status_text(member)
     return text
 end
 
+local WAVE_BARS = 6
+
+local function waveform(member)
+    local history = type(member.levels) == "table" and member.levels or {}
+    local speaking = member.speaking == true
+    local clock = noctalia.nowMs() / 1000
+    local values = {}
+    local active = false
+    for i = 1, WAVE_BARS do
+        local index = #history - WAVE_BARS + i
+        local level = 0
+        if index >= 1 then level = tonumber(history[index]) or 0 end
+        if level <= 0.001 and speaking then
+            -- no WebRTC levels available: animate a small pattern while talking
+            level = 0.2 + 0.4 * (0.5 + 0.5 * math.sin(clock * 9 + i * 1.1))
+        end
+        level = math.max(0, math.min(1, level))
+        values[i] = level
+        if level > 0.02 then active = true end
+    end
+
+    local bars = {}
+    for i = 1, WAVE_BARS do
+        bars[i] = ui.box({
+            key = "wave-" .. i,
+            width = 2,
+            height = math.floor(2 + values[i] * 11),
+            radius = 1,
+            fill = active and "primary" or "surface_container_highest",
+        })
+    end
+    return ui.row({ gap = 1, align = "center", justify = "center" }, bars)
+end
+
 local function member_row(member, is_self)
     local name = tostring(member.name or member.userId or "?")
     if is_self then name = name .. " " .. noctalia.tr("panel.you") end
@@ -156,6 +190,8 @@ local function member_row(member, is_self)
         }),
     }
 
+    children[#children + 1] = waveform(member)
+
     if not is_self and user_id ~= "" then
         local volume = pending_volume[user_id] or tonumber(member.localVolume) or 100
         children[#children + 1] = ui.slider({
@@ -164,7 +200,7 @@ local function member_row(member, is_self)
             max = 200,
             step = 5,
             value = volume,
-            width = 86,
+            width = 64,
             controlSize = "sm",
             onChange = function(value) on_volume_change(user_id, value) end,
             onDragEnd = function(value) on_volume_end(user_id, value) end,
@@ -255,10 +291,22 @@ function render()
     panel.render(ui.column({ gap = 12, padding = 16 }, content))
 end
 
+local last_frame_ms = 0
+
 function onOpen(_context)
     panel.setWantsSecondTicks(true)
+    panel.setNeedsFrameTick(true)
     pending_volume = {}
     last_sent = {}
+    state = read_state()
+    render()
+end
+
+function onFrameTick(_deltaMs)
+    -- ~10 fps is enough for the level bars and keeps the panel cheap
+    local now = noctalia.nowMs()
+    if now - last_frame_ms < 100 then return end
+    last_frame_ms = now
     state = read_state()
     render()
 end

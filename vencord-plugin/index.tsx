@@ -48,6 +48,7 @@ let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let snapshotTimer: ReturnType<typeof setTimeout> | null = null;
+let levelTimer: ReturnType<typeof setInterval> | null = null;
 let stopped = false;
 
 /** userId -> timestamp of the last "speaking: true" event */
@@ -259,6 +260,75 @@ function sendState() {
         send(buildState());
     } catch (e) {
         console.debug("[VesktopVCBridge] failed to build state", e);
+    }
+}
+
+// Per-user microphone levels for the panel waveform. WebRTC's inbound-rtp
+// stats carry `audioLevel` per SSRC, and the media connection maps SSRCs back
+// to user ids - the same data Discord uses for its speaking indicator.
+function userIdForSsrc(connection: any, ssrc: number): string {
+    try {
+        const direct = connection.getUserIdBySsrc?.(ssrc);
+        if (direct) return String(direct);
+    } catch {
+        // fall through to the map
+    }
+    const map: any = connection.userIdsBySsrc;
+    try {
+        if (map instanceof Map) return String(map.get(ssrc) ?? "");
+        if (map) return String(map[ssrc] ?? "");
+    } catch {
+        // ignore
+    }
+    return "";
+}
+
+async function pollLevels(): Promise<void> {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    try {
+        const engine: any = MediaEngineStore.getMediaEngine();
+        const connections: any = engine?.connections;
+        if (!connections) return;
+
+        const levels: Record<string, number> = {};
+        for (const connection of connections.values()) {
+            let stats: any;
+            try {
+                stats = await connection.getStats?.();
+            } catch {
+                continue;
+            }
+            if (!stats) continue;
+
+            const reports: any[] = [];
+            try {
+                if (typeof stats.forEach === "function") stats.forEach((report: any) => reports.push(report));
+                else if (Array.isArray(stats)) reports.push(...stats);
+                else reports.push(...Object.values(stats));
+            } catch {
+                continue;
+            }
+
+            for (const report of reports) {
+                try {
+                    if (String(report?.type ?? "").toLowerCase() !== "inbound-rtp") continue;
+                    const kind = String(report.kind ?? report.mediaType ?? "audio").toLowerCase();
+                    if (kind !== "audio") continue;
+                    const ssrc = Number(report.ssrc);
+                    if (!Number.isFinite(ssrc)) continue;
+                    const userId = userIdForSsrc(connection, ssrc);
+                    if (!userId) continue;
+                    const level = Number(report.audioLevel);
+                    if (Number.isFinite(level)) levels[userId] = Math.max(0, Math.min(1, level));
+                } catch {
+                    // ignore a malformed report
+                }
+            }
+        }
+
+        if (Object.keys(levels).length > 0) send({ type: "levels", levels });
+    } catch {
+        // stats are best effort
     }
 }
 
@@ -576,6 +646,7 @@ export default definePlugin({
     start() {
         stopped = false;
         connect();
+        levelTimer = setInterval(() => void pollLevels(), 150);
         heartbeatTimer = setInterval(() => {
             if (!ws || ws.readyState !== WebSocket.OPEN) {
                 connect();
@@ -590,9 +661,11 @@ export default definePlugin({
         stopped = true;
         if (reconnectTimer) clearTimeout(reconnectTimer);
         if (heartbeatTimer) clearInterval(heartbeatTimer);
+        if (levelTimer) clearInterval(levelTimer);
         if (snapshotTimer) clearTimeout(snapshotTimer);
         reconnectTimer = null;
         heartbeatTimer = null;
+        levelTimer = null;
         snapshotTimer = null;
         try {
             ws?.close();

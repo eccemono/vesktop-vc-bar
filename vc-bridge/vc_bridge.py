@@ -51,6 +51,8 @@ AVATAR_DIR = CACHE_DIR / "avatars"
 LOG_FILE = Path(os.path.expanduser("~/.local/state/vc-bridge/bridge.log"))
 
 SPEAKING_STICKY_SECONDS = 1.6
+LEVEL_FRESH_SECONDS = 0.6
+LEVEL_HISTORY = 8
 PLUGIN_STALE_SECONDS = 20.0
 ALLOWED_COMMANDS = {"toggle_mute", "toggle_deafen", "start_stream", "stop_stream", "local_mute", "local_volume", "debug_eval"}
 
@@ -78,6 +80,9 @@ class Bridge:
         self.plugin_last_msg = 0.0
         self.last_snapshot: dict = {}
         self.speaking_until: dict[str, float] = {}
+        self.level_last: dict[str, tuple[float, float]] = {}
+        self.level_history: dict[str, list[float]] = {}
+        self.last_write = 0.0
         self.avatar_urls: dict[str, str] = {}
         self.avatar_tasks: dict[str, asyncio.Task] = {}
         self.public: dict = {}
@@ -118,6 +123,19 @@ class Bridge:
         kind = payload.get("type")
         if kind == "ping":
             return
+        if kind == "levels":
+            for user_id, raw in (payload.get("levels") or {}).items():
+                try:
+                    value = max(0.0, min(1.0, float(raw)))
+                except (TypeError, ValueError):
+                    continue
+                self.level_last[user_id] = (value, now())
+                history = self.level_history.setdefault(user_id, [])
+                history.append(round(value, 3))
+                del history[:-LEVEL_HISTORY]
+            await self.publish()
+            return
+
         if kind == "state":
             self.last_snapshot = payload
             for member in [*(payload.get("members") or []), payload.get("self") or {}]:
@@ -150,6 +168,11 @@ class Bridge:
                 self.avatar_urls.pop(user_id, None)
                 path = None
             out["avatar_path"] = path if url else None
+            level, seen = self.level_last.get(user_id, (0.0, 0.0))
+            if now_ts - seen > LEVEL_FRESH_SECONDS:
+                level = 0.0
+            out["level"] = round(level, 3)
+            out["levels"] = list(self.level_history.get(user_id, []))
             return out
 
         self_member = decorate(snapshot.get("self") or {}) if snapshot.get("self") else None
@@ -178,6 +201,9 @@ class Bridge:
         serialized = json.dumps(public, sort_keys=True)
         if not force and serialized == self.public_serialized:
             return
+        if not force and now() - self.last_write < 0.12:
+            return
+        self.last_write = now()
         self.public = public
         self.public_serialized = serialized
         self.write_state(public)
@@ -384,6 +410,13 @@ async def startup(app: web.Application) -> None:
 async def ticker() -> None:
     while True:
         try:
+            now_ts = now()
+            for user_id, (_value, seen) in list(BRIDGE.level_last.items()):
+                if now_ts - seen > LEVEL_FRESH_SECONDS:
+                    BRIDGE.level_last.pop(user_id, None)
+                    history = BRIDGE.level_history.setdefault(user_id, [])
+                    history.append(0.0)
+                    del history[:-LEVEL_HISTORY]
             await BRIDGE.publish()
             await BRIDGE.refresh_avatars()
         except Exception as exc:  # noqa: BLE001

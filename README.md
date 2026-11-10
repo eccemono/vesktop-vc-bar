@@ -26,7 +26,9 @@ noctalia plugin "eccemono/vesktop-vc" (Luau widget + panel)
 - **Self controls** in the bar: mic, deafen, screen share (also stops a live
   stream). Hidden automatically when you're not in a call.
 - **Panel** (click the widget): full member list in Discord's order, live
-  speaking rings, and per-person **volume (0–200 %)** and **“mute for me”**.
+  speaking rings, a **mini audio waveform** per member (real per-user WebRTC
+  `audioLevel`, with an animated fallback), and per-person
+  **volume (0–200 %)** and **“mute for me”**.
 - **Screen-share picker fix**: Vesktop asks xdg-desktop-portal-hyprland for a
   capture source more than once per “Go Live”; the wrapper remembers your pick
   and answers the duplicates, so the picker appears once.

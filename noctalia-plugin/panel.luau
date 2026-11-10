@@ -190,8 +190,6 @@ local function member_row(member, is_self)
         }),
     }
 
-    children[#children + 1] = waveform(member)
-
     if not is_self and user_id ~= "" then
         local volume = pending_volume[user_id] or tonumber(member.localVolume) or 100
         children[#children + 1] = ui.slider({
@@ -214,6 +212,9 @@ local function member_row(member, is_self)
             onClick = function() toggle_local_mute(user_id, not muted) end,
         })
     end
+
+    -- every row ends with the waveform so they line up on the right edge
+    children[#children + 1] = waveform(member)
 
     return ui.row({
         key = user_id ~= "" and user_id or name,

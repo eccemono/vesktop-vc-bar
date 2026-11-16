@@ -11,8 +11,7 @@
  * custom Vencord build. See ~/.config/vesktop-vc/README.md for the workflow.
  */
 
-import { definePluginSettings } from "@api/Settings";
-import definePlugin, { OptionType } from "@utils/types";
+import definePlugin from "@utils/types";
 import { findByProps, findByPropsLazy } from "@webpack";
 import {
     ChannelStore,
@@ -26,19 +25,9 @@ import {
     VoiceStateStore
 } from "@webpack/common";
 
-const settings = definePluginSettings({
-    port: {
-        type: OptionType.NUMBER,
-        description: "Port of the local vc-bridge daemon (restart Vesktop after changing)",
-        default: 6475,
-        restartNeeded: true
-    },
-    debug: {
-        type: OptionType.BOOLEAN,
-        description: "Allow the local daemon to evaluate JS in the client (vcb eval). Only for debugging.",
-        default: false
-    }
-});
+import focus from "./focus";
+import { focusPatches } from "./focusPatches";
+import settings from "./settings";
 
 // ---------------------------------------------------------------------------
 // websocket plumbing
@@ -195,6 +184,7 @@ function isReallyInVoice(): boolean {
 }
 
 function buildState() {
+    focus.sync();
     const me: any = UserStore.getCurrentUser();
     if (!me) return { type: "state", connected: false, members: [], self: null, channel: null };
 
@@ -205,6 +195,7 @@ function buildState() {
     const base = {
         type: "state",
         connected: !!channelId,
+        focus: { enabled: focus.isActive(), channelId: focus.currentChannelId() },
         self: {
             userId: selfId,
             name: displayName(null, selfId),
@@ -558,6 +549,18 @@ async function startStream(): Promise<{ ok: boolean; error?: string }> {
 
 async function handleCommand(message: any) {
     switch (message.cmd) {
+        case "set_focus": {
+            try {
+                if (typeof message.enabled !== "boolean") throw new Error("Focus must be on or off");
+                const channelId = String(message.channelId ?? "");
+                focus.setFocus(channelId, message.enabled);
+                sendState();
+                send({ type: "cmd_result", id: message.id, ok: true, cmd: message.cmd });
+            } catch (error) {
+                send({ type: "cmd_result", id: message.id, ok: false, cmd: message.cmd, error: String(error) });
+            }
+            break;
+        }
         case "toggle_mute":
             toggleMute();
             break;
@@ -614,7 +617,7 @@ async function handleCommand(message: any) {
             }
             const requested = Number(message.volume ?? 100);
             const ok = setLocalVolume(userId, requested);
-            let applied = null;
+            let applied: number | null = null;
             try {
                 applied = Number((MediaEngineStore as any).getLocalVolume?.(userId));
             } catch {
@@ -657,6 +660,8 @@ export default definePlugin({
     description: "Feeds voice-channel state and controls to the local vc-bridge daemon (bar widget)",
     authors: [{ name: "eccemono", id: 0n }],
     settings,
+    focus,
+    patches: focusPatches,
 
     flux: {
         SPEAKING(event: any) {
@@ -666,6 +671,11 @@ export default definePlugin({
             scheduleSnapshot();
         },
         VOICE_STATE_UPDATES() {
+            focus.sync();
+            scheduleSnapshot();
+        },
+        VOICE_CHANNEL_SELECT(event: any) {
+            focus.onVoiceSelect(event.channelId ?? null);
             scheduleSnapshot();
         },
         STREAM_START() {
@@ -684,6 +694,7 @@ export default definePlugin({
 
     start() {
         stopped = false;
+        focus.start();
         connect();
         levelTimer = setInterval(() => void pollLevels(), 150);
         heartbeatTimer = setInterval(() => {
@@ -698,6 +709,7 @@ export default definePlugin({
 
     stop() {
         stopped = true;
+        focus.stop();
         if (reconnectTimer) clearTimeout(reconnectTimer);
         if (heartbeatTimer) clearInterval(heartbeatTimer);
         if (levelTimer) clearInterval(levelTimer);

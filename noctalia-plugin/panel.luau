@@ -19,6 +19,8 @@ local VCB = resolve_vcb()
 -- does not fight the slider
 local pending_volume = {}
 local last_sent = {}
+local focus_pending = false
+local focus_error = ""
 
 local function send_volume(user_id, value)
     local volume = math.max(0, math.min(200, math.floor(value + 0.5)))
@@ -242,6 +244,7 @@ function render()
     local channel = st.channel or {}
     local self_member = st.self
     local members = st.members or {}
+    local focused = type(st.focus) == "table" and st.focus.enabled == true
 
     local heading = channel.name or "Voice"
     local subtitle = channel.guildName or ""
@@ -256,6 +259,7 @@ function render()
         }),
         ui.label({ text = tostring(#members), fontSize = 12, color = "on_surface_variant" }),
     })
+
 
     local rows = {}
     for _, member in ipairs(members) do
@@ -281,6 +285,15 @@ function render()
             onClick = "onToggleDeafen",
         }),
         ui.button({
+            key = "panel-focus",
+            glyph = "focus-2",
+            glyphSize = 14,
+            variant = focused and "primary" or "secondary",
+            enabled = not focus_pending,
+            tooltip = focused and noctalia.tr("panel.focus_on") or noctalia.tr("panel.focus"),
+            onClick = "onToggleFocus",
+        }),
+        ui.button({
             key = "panel-share",
             text = self_member.streaming and noctalia.tr("panel.stop_share") or noctalia.tr("panel.share"),
             glyph = self_member.streaming and "screen-share-off" or "screen-share",
@@ -288,6 +301,10 @@ function render()
             onClick = "onToggleShare",
         }),
     })
+
+    if focus_error ~= "" then
+        content[#content + 1] = ui.label({ text = focus_error, fontSize = 11, color = "error" })
+    end
 
     panel.render(ui.column({ gap = 12, padding = 16 }, content))
 end
@@ -299,6 +316,8 @@ function onOpen(_context)
     panel.setNeedsFrameTick(true)
     pending_volume = {}
     last_sent = {}
+    focus_pending = false
+    focus_error = ""
     state = read_state()
     render()
 end
@@ -320,6 +339,24 @@ end
 
 function onToggleMute()
     run_vcb("mute")
+end
+
+function onToggleFocus()
+    if focus_pending or not state or state.connected ~= true then return end
+    local channel = state.channel or {}
+    if not channel.id then return end
+    local focused = type(state.focus) == "table" and state.focus.enabled == true
+    focus_pending = true
+    focus_error = ""
+    render()
+    noctalia.runAsync({ VCB, "focus", focused and "off" or "on", tostring(channel.id) }, function(result)
+        focus_pending = false
+        if result == nil or result.exitCode ~= 0 then
+            focus_error = noctalia.tr("panel.focus_failed")
+        end
+        state = read_state()
+        render()
+    end)
 end
 
 function onToggleDeafen()

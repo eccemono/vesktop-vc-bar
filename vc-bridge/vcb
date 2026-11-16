@@ -6,6 +6,7 @@
   vcb deafen            toggle your deafen
   vcb share             open Discord's Go Live / share screen flow
   vcb unshare           stop your current stream
+  vcb focus [on|off] [channelId]  show or set remembered Focus for the current VC
   vcb local-mute <id> [on|off]   mute/unmute someone for you (toggles when omitted)
   vcb local-volume <id> <0-200>  set someone's volume for you (percent)
   vcb eval "<js>"       evaluate JS in the Vesktop renderer (debug builds)
@@ -95,6 +96,7 @@ def fmt_status(state: dict) -> str:
 
     guild = channel.get("guildName")
     lines.append(f"voice:  {guild + ' / ' if guild else ''}{channel.get('name')}")
+    lines.append(f"focus:  {'on' if (state.get('focus') or {}).get('enabled') else 'off'}")
 
     me = state.get("self") or {}
     flags = []
@@ -141,6 +143,29 @@ def main(argv: list[str]) -> int:
         else:
             print(fmt_status(state))
         return 0 if state.get("plugin", {}).get("connected") else 0
+
+    if command == "focus":
+        state = read_state()
+        if len(argv) < 3:
+            print("on" if (state.get("focus") or {}).get("enabled") else "off")
+            return 0
+        if argv[2] not in ("on", "off"):
+            print("usage: vcb focus [on|off] [channelId]", file=sys.stderr)
+            return 2
+        channel_id = argv[3] if len(argv) > 3 else (state.get("channel") or {}).get("id")
+        if not state.get("connected") or not channel_id:
+            print("error: join a voice channel before setting Focus", file=sys.stderr)
+            return 1
+        sent = post("/cmd/set_focus", {"enabled": argv[2] == "on", "channelId": channel_id})
+        if not sent.get("ok"):
+            print(f"error: {sent.get('error', 'unknown error')}", file=sys.stderr)
+            return 1
+        result = wait_result(int(sent.get("id", -1)))
+        if not result.get("ok"):
+            print(f"error: {result.get('error', 'Focus did not update')}", file=sys.stderr)
+            return 1
+        print(f"ok: focus {argv[2]}")
+        return 0
 
     if command == "eval":
         if len(argv) < 3:

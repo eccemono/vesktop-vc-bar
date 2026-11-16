@@ -29,6 +29,9 @@ noctalia plugin "eccemono/vesktop-vc" (Luau widget + panel)
   speaking rings, a **mini audio waveform** per member (driven by the inbound
   audio byte rate from WebRTC stats, with an animated fallback), and per-person
   **volume (0–200 %)** and **“mute for me”**.
+- **Focus** — a per-voice-channel switch in the panel. It remembers the VC and
+  automatically silences Vesktop alerts and incidental sounds whenever you join
+  it, without silencing the conversation or your mute/deafen feedback.
 - **Screen-share picker fix**: Vesktop asks xdg-desktop-portal-hyprland for a
   capture source more than once per “Go Live”; the wrapper remembers your pick
   and answers the duplicates, so the picker appears once.
@@ -135,12 +138,56 @@ vcb mute                        # toggle your mic
 vcb deafen                      # toggle your deafen
 vcb share                       # open Discord's Go Live / share flow
 vcb unshare                     # stop your stream
+vcb focus                       # current Focus state (on/off)
+vcb focus on                    # remember Focus for this VC
+vcb focus off                   # stop focusing this VC, including future joins
 vcb local-mute <userId> [on|off]# mute someone for you
 vcb local-volume <userId> <0-200> # someone's volume for you
 ```
 
 State lives in `~/.cache/vc-bridge/state.json`; logs in
 `~/.local/state/vc-bridge/bridge.log` and `journalctl --user -u vc-bridge`.
+
+## Focus
+
+Join a voice channel, open the widget's panel and click **Focus**. The button
+becomes **Focus on**. Clicking it again turns it off for that channel. The
+choice is saved in Vencord's `VesktopVCBridge.focusChannelIds` plugin setting,
+not in the disposable bridge cache, so it survives restarts and rejoining.
+Guild VCs and private/group calls use their unique channel IDs.
+
+While you are connected to a focused VC:
+
+- All Vesktop desktop alerts and Discord/Vencord notification pop-ups are
+  suppressed, including alerts from other servers and DMs. Plugin pop-ups are
+  silently dismissed rather than queued for later.
+- Message, join/leave, move, disconnect/reconnect, ringing, stream, activity,
+  push-to-talk and other app sound effects are suppressed. Soundboard and TTS
+  are suppressed too; already-playing app effects are stopped when Focus begins.
+- **Live voice audio stays untouched**, as do individual mute/volume controls.
+  Your own **mute/unmute and deafen/undeafen sounds remain allowed**, including
+  seasonal sound packs (subject to your existing Discord sound settings).
+- Reconnects keep Focus active. Leaving the VC or joining an unfocused one
+  restores normal alerts. Merely viewing a focused channel does not activate it.
+
+Focus does not alter your Discord status, global notification preferences,
+unread messages, other apps, or your existing Vencord userplugins. It filters
+alerts locally; it is not Discord server moderation or a system-wide audio mute.
+
+## Tests
+
+```sh
+python -m unittest discover -s tests -p 'test_*.py'  # needs the bridge venv/dependencies
+lua tests/test_panel_focus.lua                    # no desktop or live call required
+```
+
+From the Vencord checkout (where `tsx` is installed):
+
+```sh
+pnpm exec tsx --test /path/to/vesktop-vc-bar/tests/focusPolicy.test.ts
+pnpm test:ts
+pnpm build --dev
+```
 
 ## How it works
 

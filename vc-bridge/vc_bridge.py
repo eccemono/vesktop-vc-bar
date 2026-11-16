@@ -54,7 +54,7 @@ SPEAKING_STICKY_SECONDS = 1.6
 LEVEL_FRESH_SECONDS = 0.6
 LEVEL_HISTORY = 8
 PLUGIN_STALE_SECONDS = 20.0
-ALLOWED_COMMANDS = {"toggle_mute", "toggle_deafen", "start_stream", "stop_stream", "local_mute", "local_volume", "debug_eval"}
+ALLOWED_COMMANDS = {"toggle_mute", "toggle_deafen", "start_stream", "stop_stream", "local_mute", "local_volume", "set_focus", "debug_eval"}
 
 
 def log(message: str) -> None:
@@ -147,6 +147,8 @@ class Bridge:
             await self.publish()
         elif kind == "cmd_result":
             self.last_result = dict(payload, received_at=now())
+            if payload.get("cmd") == "set_focus" and payload.get("ok"):
+                await self.publish(force=True)
             log(f"plugin cmd_result {payload.get('cmd')}: ok={payload.get('ok')} {payload.get('error', '')}")
 
     # -- public state ------------------------------------------------------
@@ -189,6 +191,10 @@ class Bridge:
                 "last_msg_at": self.plugin_last_msg,
             },
             "channel": channel if connected else None,
+            "focus": {
+                "enabled": bool(connected and (snapshot.get("focus") or {}).get("enabled")),
+                "channelId": channel.get("id") if connected else None,
+            },
             "self": self_member,
             "members": members if connected else [],
             "speaking": [m["userId"] for m in members if m.get("speaking")],

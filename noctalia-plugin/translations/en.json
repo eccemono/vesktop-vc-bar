@@ -26,5 +26,8 @@
   "panel.stop_share": "Stop sharing",
   "panel.server_muted": "server muted",
   "panel.server_deafened": "server deafened",
-  "panel.muted_for_you": "muted for you"
+  "panel.muted_for_you": "muted for you",
+  "panel.focus": "Focus",
+  "panel.focus_on": "Focus on",
+  "panel.focus_failed": "Focus could not update. Reopen the panel and try again."
 }

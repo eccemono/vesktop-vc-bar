@@ -7,6 +7,10 @@ WebSocket and accepts control commands back.
   flags, speaking flags) on connect, on any voice-state/speaking/stream change,
   and every 5 s as a heartbeat.
 - Receives `toggle_mute`, `toggle_deafen`, `start_stream`, `stop_stream`.
+- `set_focus` saves a per-VC Focus choice and filters app sound effects,
+  desktop notifications, in-app alerts, soundboard and TTS while in that VC.
+  Voice and self mute/deafen feedback are not muted. The remembered channel
+  IDs live in this plugin's `focusChannelIds` setting and survive rebuilds.
 - `debug_eval` (optional `debug` setting) evaluates JS in the renderer for
   troubleshooting through `vcb eval "<js>"`.
 

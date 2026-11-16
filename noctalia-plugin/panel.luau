@@ -284,14 +284,21 @@ function render()
             variant = self_member.deaf and "destructive" or "secondary",
             onClick = "onToggleDeafen",
         }),
-        ui.button({
+        ui.row({
             key = "panel-focus",
-            glyph = "focus-2",
-            glyphSize = 14,
-            variant = focused and "primary" or "secondary",
-            enabled = not focus_pending,
+            width = 40,
+            height = 38,
+            radius = 8,
+            fill = focused and "#3ba55d2e" or "#ed42452e",
+            border = focused and "#3ba55d" or "#ed4245",
+            borderWidth = 1,
+            align = "center",
+            justify = "center",
+            opacity = focus_pending and 0.55 or 1,
             tooltip = focused and noctalia.tr("panel.focus_on") or noctalia.tr("panel.focus"),
-            onClick = "onToggleFocus",
+            onClick = (not focus_pending) and "onToggleFocus" or nil,
+        }, {
+            ui.glyph({ name = "focus-2", size = 15, color = focused and "#3ba55d" or "#ed4245" }),
         }),
         ui.button({
             key = "panel-share",

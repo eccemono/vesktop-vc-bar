@@ -63,23 +63,23 @@ end
 
 assert(loadfile(arg[1] or "noctalia-plugin/panel.luau"))()
 onOpen()
-assert(find("panel-focus").props.text == nil, "Focus is icon-only")
-assert(find("panel-focus").props.glyph == "focus-2")
+assert(find("panel-focus").kind == "row", "Focus is a compact icon chip")
+assert(find("panel-focus").props.border == "#ed4245", "Focus off is red")
 assert(find("panel-focus").props.tooltip == "panel.focus")
 assert(button_order("panel-focus") == "panel-mic,panel-deaf,panel-focus,panel-share",
     "Focus sits between Deafen and Share screen")
 
 onToggleFocus()
 assert(calls[1][2] == "focus" and calls[1][3] == "on" and calls[1][4] == "123")
-assert(find("panel-focus").props.enabled == false)
+assert(find("panel-focus").props.onClick == nil and find("panel-focus").props.opacity < 1)
 onToggleFocus()
 assert(#calls == 1, "Double clicks must not send duplicate commands")
 
 snapshot.focus.enabled = true
 completion({ exitCode = 0 })
 assert(find("panel-focus").props.tooltip == "panel.focus_on")
-assert(find("panel-focus").props.variant == "primary")
-assert(find("panel-focus").props.enabled == true)
+assert(find("panel-focus").props.border == "#3ba55d", "Focus on is green")
+assert(find("panel-focus").props.onClick == "onToggleFocus")
 
 onToggleFocus()
 assert(calls[2][3] == "off" and calls[2][4] == "123")

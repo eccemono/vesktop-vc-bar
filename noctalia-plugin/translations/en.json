@@ -33,5 +33,6 @@
   "panel.save_vc": "Save this voice channel",
   "panel.saved": "Saved — click to remove",
   "panel.saved_chip": "Click to join · right-click to remove",
-  "panel.saved_error": "Could not update saved voice channels"
+  "panel.saved_error": "Could not update saved voice channels",
+  "panel.disconnect": "Disconnect"
 }

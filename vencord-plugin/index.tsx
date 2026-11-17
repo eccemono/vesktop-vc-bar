@@ -589,6 +589,15 @@ async function handleCommand(message: any) {
             send({ type: "cmd_result", id: message.id, ok: true, cmd: message.cmd, result: JSON.stringify({ saved: result.saved }) });
             break;
         }
+        case "disconnect_vc": {
+            try {
+                FluxDispatcher.dispatch({ type: "VOICE_CHANNEL_SELECT", channelId: null } as any);
+                send({ type: "cmd_result", id: message.id, ok: true, cmd: message.cmd });
+            } catch (error) {
+                send({ type: "cmd_result", id: message.id, ok: false, cmd: message.cmd, error: String(error) });
+            }
+            break;
+        }
         case "join_vc": {
             const channelId = String(message.channelId ?? "");
             const actions: any = findByProps("selectVoiceChannel");

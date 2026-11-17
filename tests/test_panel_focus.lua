@@ -68,12 +68,19 @@ assert(find("panel-focus").props.border == "#ed4245", "Focus off is red")
 assert(find("panel-focus").props.tooltip == "panel.focus")
 assert(button_order("panel-focus") == "panel-mic,panel-deaf,panel-focus,panel-share",
     "Focus sits between Deafen and Share screen")
+local disconnect = find("panel-disconnect")
+assert(disconnect.props.text == nil and disconnect.props.glyph == "phone-off" and disconnect.props.variant == "destructive")
+assert(find_row_containing("panel-disconnect") ~= find_row_containing("panel-focus"),
+    "Disconnect lives in the channel header, not the controls row")
+assert(disconnect.props.onClick == "onDisconnect")
+onDisconnect()
+assert(calls[1][2] == "disconnect", "Disconnect uses the CLI")
 
 onToggleFocus()
-assert(calls[1][2] == "focus" and calls[1][3] == "on" and calls[1][4] == "123")
+assert(calls[2][2] == "focus" and calls[2][3] == "on" and calls[2][4] == "123")
 assert(find("panel-focus").props.onClick == nil and find("panel-focus").props.opacity < 1)
 onToggleFocus()
-assert(#calls == 1, "Double clicks must not send duplicate commands")
+assert(#calls == 2, "Double clicks must not send duplicate commands")
 
 snapshot.focus.enabled = true
 completion({ exitCode = 0 })
@@ -82,7 +89,7 @@ assert(find("panel-focus").props.border == "#3ba55d", "Focus on is green")
 assert(find("panel-focus").props.onClick == "onToggleFocus")
 
 onToggleFocus()
-assert(calls[2][3] == "off" and calls[2][4] == "123")
+assert(calls[3][3] == "off" and calls[3][4] == "123")
 completion({ exitCode = 1 })
 assert(find("panel-focus").props.tooltip == "panel.focus_on", "Failed toggle must not fake success")
 local error_label

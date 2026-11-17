@@ -6,6 +6,7 @@
   vcb deafen            toggle your deafen
   vcb share             open Discord's Go Live / share screen flow
   vcb unshare           stop your current stream
+  vcb disconnect        leave the current voice channel
   vcb focus [on|off] [channelId]  show or set remembered Focus for the current VC
   vcb save-vc <channelId> [on|off]  star or unstar a voice channel (max 3)
   vcb join-vc <channelId>          join a saved voice channel
@@ -39,6 +40,7 @@ ACTIONS = {
     "start-stream": "start_stream",
     "unshare": "stop_stream",
     "stop-stream": "stop_stream",
+    "disconnect": "disconnect_vc",
 }
 
 

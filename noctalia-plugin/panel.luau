@@ -329,6 +329,15 @@ function render()
             }),
         }),
         ui.label({ text = tostring(#members), fontSize = 12, color = "on_surface_variant" }),
+        ui.button({
+            key = "panel-disconnect",
+            glyph = "phone-off",
+            glyphSize = 14,
+            controlSize = "sm",
+            variant = "destructive",
+            tooltip = noctalia.tr("panel.disconnect"),
+            onClick = "onDisconnect",
+        }),
     })
 
 
@@ -441,6 +450,10 @@ function onToggleSaved()
         state = read_state()
         render()
     end)
+end
+
+function onDisconnect()
+    run_vcb("disconnect")
 end
 
 function onToggleMute()

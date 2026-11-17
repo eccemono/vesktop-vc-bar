@@ -45,6 +45,15 @@ class FocusStateTests(unittest.TestCase):
 
     def test_command_is_supported(self):
         self.assertIn("set_focus", module.ALLOWED_COMMANDS)
+        self.assertIn("set_saved_vc", module.ALLOWED_COMMANDS)
+        self.assertIn("join_vc", module.ALLOWED_COMMANDS)
+
+    def test_saved_vcs_are_passed_through(self):
+        bridge = self.bridge()
+        bridge.last_snapshot["savedVcs"] = [{"id": "1", "name": "Study", "count": 2}]
+        self.assertEqual(bridge.build_public()["savedVcs"], [{"id": "1", "name": "Study", "count": 2}])
+        bridge.plugin_ws = None
+        self.assertEqual(bridge.build_public()["savedVcs"], [{"id": "1", "name": "Study", "count": 2}])
 
 
 if __name__ == "__main__":

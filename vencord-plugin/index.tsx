@@ -27,6 +27,7 @@ import {
 
 import focus from "./focus";
 import { focusPatches } from "./focusPatches";
+import { MAX_SAVED_VCS, parseSavedVcs, setSavedVc } from "./savedVcs";
 import settings from "./settings";
 
 // ---------------------------------------------------------------------------
@@ -39,6 +40,28 @@ let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let snapshotTimer: ReturnType<typeof setTimeout> | null = null;
 let levelTimer: ReturnType<typeof setInterval> | null = null;
 let stopped = false;
+
+function channelSummary(channelId: string) {
+    const channel: any = ChannelStore.getChannel(channelId);
+    if (!channel) return { id: channelId, name: "Voice", guildName: null, count: 0 };
+    const guild: any = channel.guild_id ? GuildStore.getGuild(channel.guild_id) : null;
+    let count = 0;
+    try {
+        count = Object.keys(VoiceStateStore.getVoiceStatesForChannel(channelId) ?? {}).length;
+    } catch {
+        // the channel is gone or voice states are not loaded
+    }
+    return {
+        id: channelId,
+        name: channel.name || "Voice",
+        guildName: guild?.name ?? null,
+        count
+    };
+}
+
+function savedVcsState() {
+    return parseSavedVcs(settings.store.savedVcs ?? "").map(channelSummary);
+}
 
 /** userId -> timestamp of the last "speaking: true" event */
 const speaking = new Map<string, number>();
@@ -196,6 +219,7 @@ function buildState() {
         type: "state",
         connected: !!channelId,
         focus: { enabled: focus.isActive(), channelId: focus.currentChannelId() },
+        savedVcs: savedVcsState(),
         self: {
             userId: selfId,
             name: displayName(null, selfId),
@@ -549,6 +573,37 @@ async function startStream(): Promise<{ ok: boolean; error?: string }> {
 
 async function handleCommand(message: any) {
     switch (message.cmd) {
+        case "set_saved_vc": {
+            const channelId = String(message.channelId ?? "");
+            if (!/^\d{1,20}$/.test(channelId)) {
+                send({ type: "cmd_result", id: message.id, ok: false, cmd: message.cmd, error: "missing channelId" });
+                break;
+            }
+            const result = setSavedVc(settings.store.savedVcs ?? "", channelId, message.saved);
+            if (result.error) {
+                send({ type: "cmd_result", id: message.id, ok: false, cmd: message.cmd, error: result.error });
+                break;
+            }
+            settings.store.savedVcs = result.value;
+            sendState();
+            send({ type: "cmd_result", id: message.id, ok: true, cmd: message.cmd, result: JSON.stringify({ saved: result.saved }) });
+            break;
+        }
+        case "join_vc": {
+            const channelId = String(message.channelId ?? "");
+            const actions: any = findByProps("selectVoiceChannel");
+            if (!channelId || typeof actions?.selectVoiceChannel !== "function") {
+                send({ type: "cmd_result", id: message.id, ok: false, cmd: message.cmd, error: "cannot join that voice channel" });
+                break;
+            }
+            try {
+                actions.selectVoiceChannel(channelId);
+                send({ type: "cmd_result", id: message.id, ok: true, cmd: message.cmd });
+            } catch (error) {
+                send({ type: "cmd_result", id: message.id, ok: false, cmd: message.cmd, error: String(error) });
+            }
+            break;
+        }
         case "set_focus": {
             try {
                 if (typeof message.enabled !== "boolean") throw new Error("Focus must be on or off");

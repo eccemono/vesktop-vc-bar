@@ -7,6 +7,8 @@
   vcb share             open Discord's Go Live / share screen flow
   vcb unshare           stop your current stream
   vcb focus [on|off] [channelId]  show or set remembered Focus for the current VC
+  vcb save-vc <channelId> [on|off]  star or unstar a voice channel (max 3)
+  vcb join-vc <channelId>          join a saved voice channel
   vcb local-mute <id> [on|off]   mute/unmute someone for you (toggles when omitted)
   vcb local-volume <id> <0-200>  set someone's volume for you (percent)
   vcb eval "<js>"       evaluate JS in the Vesktop renderer (debug builds)
@@ -165,6 +167,28 @@ def main(argv: list[str]) -> int:
             print(f"error: {result.get('error', 'Focus did not update')}", file=sys.stderr)
             return 1
         print(f"ok: focus {argv[2]}")
+        return 0
+
+    if command in ("save-vc", "join-vc"):
+        if len(argv) < 3:
+            print(f"usage: vcb {command} <channelId>" + (" [on|off]" if command == "save-vc" else ""), file=sys.stderr)
+            return 2
+        channel_id = argv[2]
+        if command == "save-vc":
+            saved = True
+            if len(argv) > 3:
+                saved = argv[3].lower() not in ("off", "0", "false", "no", "remove")
+            result = post("/cmd/set_saved_vc", {"channelId": channel_id, "saved": saved})
+        else:
+            result = post("/cmd/join_vc", {"channelId": channel_id})
+        if not result.get("ok"):
+            print(f"error: {result.get('error', 'unknown error')}", file=sys.stderr)
+            return 1
+        done = wait_result(int(result.get("id", -1)))
+        if not done.get("ok"):
+            print(f"error: {done.get('error', 'command failed')}", file=sys.stderr)
+            return 1
+        print(f"ok: {command}")
         return 0
 
     if command == "eval":

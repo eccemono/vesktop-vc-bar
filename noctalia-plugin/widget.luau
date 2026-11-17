@@ -174,17 +174,18 @@ end
 local function render()
     local st = state
     local connected = st ~= nil and st.connected == true and type(st.self) == "table"
-    local hide_when_idle = bool_cfg("hide_when_idle", true)
+    local hide_when_idle = bool_cfg("hide_when_idle", false)
+    local plugin_connected = st ~= nil and type(st.plugin) == "table" and st.plugin.connected == true
 
     if not connected then
-        barWidget.setVisible(not hide_when_idle)
-        if hide_when_idle then
+        -- Latent spiral while Vesktop is open but no voice channel is joined.
+        barWidget.setVisible(plugin_connected and not hide_when_idle)
+        if not plugin_connected or hide_when_idle then
             barWidget.clearTooltip()
             return
         end
-        barWidget.render(ui.row({ gap = 6, align = "center" }, {
-            ui.glyph({ name = "microphone-off", size = 14 }),
-            ui.label({ text = noctalia.tr("widget.idle") }),
+        barWidget.render(ui.row({ gap = 0, align = "center" }, {
+            ui.glyph({ name = "spiral", size = 15, color = "on_surface_variant" }),
         }))
         barWidget.setTooltip({ { key = "Vesktop", value = noctalia.tr("widget.idle") } })
         return

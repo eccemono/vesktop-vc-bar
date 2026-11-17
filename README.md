@@ -20,7 +20,8 @@ noctalia plugin "eccemono/vesktop-vc" (Luau widget + panel)
 
 - **Bar bubbles** — avatars for everyone in the channel, a ring around whoever
   is talking, and the mute/deafen/streaming badges composited onto the pfp
-  (white-grey for self-mute, red for server-mute).
+  (white-grey for self-mute, red for server-mute). When Vesktop is open but you
+  are not in a call, a small latent spiral icon takes their place.
 - **Up to 5 people always shown** in Discord's order (the order never changes
   while someone speaks). With 6+ it shows the speakers plus `+N`.
 - **Self controls** in the bar: mic, deafen, screen share (also stops a live
@@ -29,6 +30,9 @@ noctalia plugin "eccemono/vesktop-vc" (Luau widget + panel)
   speaking rings, a **mini audio waveform** per member (driven by the inbound
   audio byte rate from WebRTC stats, with an animated fallback), and per-person
   **volume (0–200 %)** and **“mute for me”**.
+- **Saved voice channels** — star the current VC in the panel footer and it
+  stays there (up to three) with a live member count, even when you are not in a
+  call. Click a saved VC to join it, right-click to remove it.
 - **Focus** — a per-voice-channel switch in the panel. It remembers the VC and
   automatically silences Vesktop alerts and incidental sounds whenever you join
   it, without silencing the conversation or your mute/deafen feedback.

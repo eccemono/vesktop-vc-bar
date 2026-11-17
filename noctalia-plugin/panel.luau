@@ -21,6 +21,7 @@ local pending_volume = {}
 local last_sent = {}
 local focus_pending = false
 local focus_error = ""
+local saved_error = ""
 
 local function send_volume(user_id, value)
     local volume = math.max(0, math.min(200, math.floor(value + 0.5)))
@@ -48,6 +49,69 @@ end
 
 local function toggle_local_mute(user_id, muted)
     noctalia.runAsync({ VCB, "local-mute", user_id, muted and "on" or "off" })
+end
+
+local function truncate(text, limit)
+    if #text <= limit then return text end
+    return string.sub(text, 1, limit - 1) .. "…"
+end
+
+local function saved_list(st)
+    return type(st.savedVcs) == "table" and st.savedVcs or {}
+end
+
+local function is_starred(st)
+    local current = type(st.channel) == "table" and st.channel.id
+    if not current then return false end
+    for _, vc in ipairs(saved_list(st)) do
+        if tostring(vc.id) == tostring(current) then return true end
+    end
+    return false
+end
+
+local function join_saved(channel_id)
+    noctalia.runAsync({ VCB, "join-vc", channel_id }, function()
+        state = read_state()
+        render()
+    end)
+end
+
+local function remove_saved(channel_id)
+    noctalia.runAsync({ VCB, "save-vc", channel_id, "off" }, function()
+        state = read_state()
+        render()
+    end)
+end
+
+local function saved_row(st, connected, plugin_connected)
+    local chips = {}
+    local starred = connected and is_starred(st)
+    chips[#chips + 1] = ui.button({
+        key = "save-vc",
+        glyph = starred and "star-filled" or "star",
+        glyphSize = 14,
+        controlSize = "sm",
+        variant = starred and "primary" or "secondary",
+        enabled = connected,
+        tooltip = starred and noctalia.tr("panel.saved") or noctalia.tr("panel.save_vc"),
+        onClick = "onToggleSaved",
+    })
+    for _, vc in ipairs(saved_list(st)) do
+        local id = tostring(vc.id or "")
+        if id ~= "" then
+            chips[#chips + 1] = ui.button({
+                key = "saved-" .. id,
+                text = truncate(tostring(vc.name or "Voice"), 10) .. " " .. tostring(tonumber(vc.count) or 0),
+                controlSize = "sm",
+                variant = "secondary",
+                enabled = plugin_connected,
+                tooltip = noctalia.tr("panel.saved_chip"),
+                onClick = function() join_saved(id) end,
+                onRightClick = function() remove_saved(id) end,
+            })
+        end
+    end
+    return ui.row({ gap = 6, align = "center" }, chips)
 end
 
 local function read_state()
@@ -234,9 +298,16 @@ function render()
 
     if not st or st.connected ~= true or type(st.self) ~= "table" then
         content[#content + 1] = ui.column({ gap = 8, align = "center", paddingV = 24 }, {
-            ui.glyph({ name = "microphone-off", size = 24, color = "on_surface_variant" }),
+            ui.glyph({ name = "spiral", size = 24, color = "on_surface_variant" }),
             ui.label({ text = noctalia.tr("panel.empty"), color = "on_surface_variant" }),
         })
+        if st ~= nil and #saved_list(st) > 0 then
+            local plugin_connected = type(st.plugin) == "table" and st.plugin.connected == true
+            content[#content + 1] = saved_row(st, false, plugin_connected)
+        end
+        if saved_error ~= "" then
+            content[#content + 1] = ui.label({ text = saved_error, fontSize = 11, color = "error" })
+        end
         panel.render(ui.column({ gap = 12, padding = 16 }, content))
         return
     end
@@ -313,6 +384,12 @@ function render()
         content[#content + 1] = ui.label({ text = focus_error, fontSize = 11, color = "error" })
     end
 
+    content[#content + 1] = saved_row(st, true, true)
+
+    if saved_error ~= "" then
+        content[#content + 1] = ui.label({ text = saved_error, fontSize = 11, color = "error" })
+    end
+
     panel.render(ui.column({ gap = 12, padding = 16 }, content))
 end
 
@@ -325,6 +402,7 @@ function onOpen(_context)
     last_sent = {}
     focus_pending = false
     focus_error = ""
+    saved_error = ""
     state = read_state()
     render()
 end
@@ -342,6 +420,27 @@ function update()
     local next_state = read_state()
     state = next_state
     render()
+end
+
+function onToggleSaved()
+    if not state or state.connected ~= true then return end
+    local current = type(state.channel) == "table" and state.channel.id
+    if not current then return end
+    local starred = is_starred(state)
+    saved_error = ""
+    noctalia.runAsync({ VCB, "save-vc", tostring(current), starred and "off" or "on" }, function(result)
+        if result == nil or result.exitCode ~= 0 then
+            local message = noctalia.tr("panel.saved_error")
+            if result ~= nil and type(result.stderr) == "string" and result.stderr ~= "" then
+                local detail = string.gsub(result.stderr, "^error:%s*", "")
+                detail = string.gsub(detail, "%s+$", "")
+                if detail ~= "" then message = detail end
+            end
+            saved_error = message
+        end
+        state = read_state()
+        render()
+    end)
 end
 
 function onToggleMute()

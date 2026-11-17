@@ -51,7 +51,7 @@ entry = "widget.luau"
   type            = "bool"
   label_key       = "settings.hide_when_idle.label"
   description_key = "settings.hide_when_idle.description"
-  default         = true
+  default         = false
 
   [[widget.setting]]
   key             = "poll_ms"

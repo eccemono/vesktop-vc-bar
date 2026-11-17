@@ -54,7 +54,7 @@ SPEAKING_STICKY_SECONDS = 1.6
 LEVEL_FRESH_SECONDS = 0.6
 LEVEL_HISTORY = 8
 PLUGIN_STALE_SECONDS = 20.0
-ALLOWED_COMMANDS = {"toggle_mute", "toggle_deafen", "start_stream", "stop_stream", "local_mute", "local_volume", "set_focus", "debug_eval"}
+ALLOWED_COMMANDS = {"toggle_mute", "toggle_deafen", "start_stream", "stop_stream", "local_mute", "local_volume", "set_focus", "set_saved_vc", "join_vc", "debug_eval"}
 
 
 def log(message: str) -> None:
@@ -195,6 +195,7 @@ class Bridge:
                 "enabled": bool(connected and (snapshot.get("focus") or {}).get("enabled")),
                 "channelId": channel.get("id") if connected else None,
             },
+            "savedVcs": snapshot.get("savedVcs") or [],
             "self": self_member,
             "members": members if connected else [],
             "speaking": [m["userId"] for m in members if m.get("speaking")],

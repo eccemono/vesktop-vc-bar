@@ -18,5 +18,11 @@ export default definePluginSettings({
         description: "Voice channels with Focus enabled (managed by the voice panel)",
         default: "",
         hidden: true
+    },
+    savedVcs: {
+        type: OptionType.STRING,
+        description: "Starred voice channels (managed by the voice panel)",
+        default: "",
+        hidden: true
     }
 });

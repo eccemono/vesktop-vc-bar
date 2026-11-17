@@ -6,7 +6,7 @@
   "settings.show_controls.label": "Show controls",
   "settings.show_controls.description": "Show the mute, deafen and screen share buttons next to the bubbles.",
   "settings.hide_when_idle.label": "Hide when not in a call",
-  "settings.hide_when_idle.description": "Hide the widget entirely when you are not in a voice channel.",
+  "settings.hide_when_idle.description": "Hide the widget entirely when you are not in a voice channel instead of showing the small spiral icon.",
   "settings.poll_ms.label": "Refresh interval (ms)",
   "settings.poll_ms.description": "How often the widget re-reads the vc-bridge state.",
   "widget.idle": "No voice",
@@ -29,5 +29,9 @@
   "panel.muted_for_you": "muted for you",
   "panel.focus": "Focus",
   "panel.focus_on": "Focus on",
-  "panel.focus_failed": "Focus could not update. Reopen the panel and try again."
+  "panel.focus_failed": "Focus could not update. Reopen the panel and try again.",
+  "panel.save_vc": "Save this voice channel",
+  "panel.saved": "Saved — click to remove",
+  "panel.saved_chip": "Click to join · right-click to remove",
+  "panel.saved_error": "Could not update saved voice channels"
 }
